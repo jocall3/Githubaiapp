@@ -1,0 +1,5 @@
+{
+  "name": "GitHub AI Code Editor",
+  "description": "An application that allows you to load all your GitHub repositories into a unified file system, edit files with the help of an AI, and commit changes back to GitHub.",
+  "requestFramePermissions": []
+}
