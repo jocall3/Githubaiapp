@@ -1,4 +1,3 @@
-
 import { GoogleGenAI, GenerateContentResponse } from "@google/genai";
 
 // Lazily initialize the AI client to prevent app crash if process.env is not defined

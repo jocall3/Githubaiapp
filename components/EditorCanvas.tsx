@@ -1,9 +1,6 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { SelectedFile, Branch } from '../types';
 import { Spinner } from './Spinner';
-
-// Define the monaco editor type. It will be available on the window object.
-declare const monaco: any;
 
 interface EditorCanvasProps {
   selectedFile: SelectedFile | null;
@@ -16,38 +13,6 @@ interface EditorCanvasProps {
   onCreateBranch: (newBranchName: string) => Promise<void>;
   onCreatePullRequest: (title: string, body: string) => Promise<void>;
 }
-
-const getLanguageForFile = (filename: string): string => {
-    const extension = filename.split('.').pop()?.toLowerCase();
-    switch (extension) {
-        case 'js': return 'javascript';
-        case 'ts': return 'typescript';
-        case 'tsx': return 'typescript';
-        case 'jsx': return 'javascript';
-        case 'json': return 'json';
-        case 'html': return 'html';
-        case 'css': return 'css';
-        case 'py': return 'python';
-        case 'md': return 'markdown';
-        case 'java': return 'java';
-        case 'c':
-        case 'h':
-             return 'c';
-        case 'cpp': return 'cpp';
-        case 'go': return 'go';
-        case 'php': return 'php';
-        case 'rb': return 'ruby';
-        case 'rs': return 'rust';
-        case 'sh': return 'shell';
-        case 'sql': return 'sql';
-        case 'xml': return 'xml';
-        case 'yaml':
-        case 'yml':
-             return 'yaml';
-        default: return 'plaintext';
-    }
-};
-
 
 export const EditorCanvas: React.FC<EditorCanvasProps> = ({
   selectedFile,
@@ -64,78 +29,31 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
   const [commitMessage, setCommitMessage] = useState('');
   const [newBranchName, setNewBranchName] = useState('');
   const [isCreatingBranch, setIsCreatingBranch] = useState(false);
-  const [hasChanges, setHasChanges] = useState(false);
   const [isCreatingPR, setIsCreatingPR] = useState(false);
   const [prTitle, setPrTitle] = useState('');
   const [prBody, setPrBody] = useState('');
-
-  const editorRef = useRef<any>(null);
-  const editorContainerRef = useRef<HTMLDivElement>(null);
+  const [editedContent, setEditedContent] = useState('');
 
   useEffect(() => {
     if (selectedFile) {
         const defaultCommitMsg = `Update ${selectedFile.path}`;
         setCommitMessage(defaultCommitMsg);
         setPrTitle(defaultCommitMsg);
+        setEditedContent(selectedFile.content);
     }
-  }, [selectedFile?.path]);
-  
-  // Monaco Editor Initialization and Content Update
-  useEffect(() => {
-    let editorInstance: any;
-    if (editorContainerRef.current && typeof monaco !== 'undefined' && selectedFile) {
-        if (!editorRef.current) {
-            editorInstance = monaco.editor.create(editorContainerRef.current, {
-                value: selectedFile.content,
-                language: getLanguageForFile(selectedFile.path),
-                theme: 'vs-dark',
-                automaticLayout: true,
-                minimap: { enabled: true },
-            });
-            editorInstance.onDidChangeModelContent(() => {
-                setHasChanges(editorInstance.getValue() !== selectedFile?.content);
-            });
-            editorRef.current = editorInstance;
-        } else {
-            editorInstance = editorRef.current;
-            const model = editorInstance.getModel();
-            const language = getLanguageForFile(selectedFile.path);
-            if (model) {
-                monaco.editor.setModelLanguage(model, language);
-                if (editorInstance.getValue() !== selectedFile.content) {
-                    editorInstance.setValue(selectedFile.content);
-                }
-            }
-        }
-    }
-
-    // Cleanup on unmount
-    return () => {
-        if (editorInstance && !editorContainerRef.current) {
-             editorInstance.dispose();
-             editorRef.current = null;
-        }
-    };
   }, [selectedFile]);
-
-  // Second effect to re-evaluate hasChanges when file content changes from props
-  useEffect(() => {
-    if (editorRef.current && selectedFile) {
-        setHasChanges(editorRef.current.getValue() !== selectedFile.content);
-    }
-  }, [selectedFile?.content]);
+  
+  const hasChanges = selectedFile ? editedContent !== selectedFile.content : false;
 
   const handleAiEditClick = async () => {
-    if (!aiInstruction.trim() || !editorRef.current) return;
-    const currentCode = editorRef.current.getValue();
-    const newCode = await onAiEdit(currentCode, aiInstruction);
-    editorRef.current.setValue(newCode);
+    if (!aiInstruction.trim()) return;
+    const newCode = await onAiEdit(editedContent, aiInstruction);
+    setEditedContent(newCode);
   };
 
   const handleCommitClick = async () => {
-    if (!commitMessage.trim() || !selectedFile || !editorRef.current) return;
-    await onCommit(commitMessage, editorRef.current.getValue());
-    setPrTitle(commitMessage); // Update PR title with latest commit message
+    if (!commitMessage.trim() || !selectedFile) return;
+    await onCommit(commitMessage, editedContent);
   };
 
   const handleCreateBranchClick = async () => {
@@ -168,7 +86,12 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
             <h3 className="text-lg font-semibold text-gray-200">{selectedFile.path}</h3>
             <p className="text-sm text-gray-400">{selectedFile.repoFullName}</p>
         </div>
-        <div ref={editorContainerRef} className="flex-grow w-full border border-gray-700 rounded-md overflow-hidden monaco-editor-container"></div>
+        <textarea
+          value={editedContent}
+          onChange={(e) => setEditedContent(e.target.value)}
+          className="flex-grow w-full border border-gray-700 rounded-md bg-gray-950 text-gray-200 p-4 font-mono text-sm resize-none focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          spellCheck="false"
+        />
       </div>
 
       {/* Control Panel */}

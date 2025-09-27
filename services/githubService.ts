@@ -49,7 +49,6 @@ const buildTreeStructure = (items: GitTreeItem[]): (DirNode | FileNode)[] => {
 
   items.forEach(item => {
     if (item.type !== 'blob') return; // Only process files (blobs)
-
     const parts = item.path.split('/');
     let currentLevel = root.children;
 
@@ -88,7 +87,6 @@ const buildTreeStructure = (items: GitTreeItem[]): (DirNode | FileNode)[] => {
       }
       return a.name.localeCompare(b.name);
     });
-
     return nodes;
   };
 
@@ -100,6 +98,7 @@ export async function fetchRepoTree(token: string, owner: string, repo: string, 
   const { tree } = await githubFetch<{ tree: GitTreeItem[] }>(`/repos/${owner}/${repo}/git/trees/${branch}?recursive=1`, token);
   return buildTreeStructure(tree);
 }
+
 
 export async function getFileContent(token: string, owner: string, repo: string, path: string, branch?: string): Promise<{ path: string; content: string; sha: string }> {
   const url = branch ? `/repos/${owner}/${repo}/contents/${path}?ref=${branch}` : `/repos/${owner}/${repo}/contents/${path}`;
@@ -136,7 +135,6 @@ interface CommitFileParams {
   message: string;
   sha: string; // The blob SHA of the file being replaced.
 }
-
 export async function commitFile({ token, owner, repo, branch, path, content, message, sha }: CommitFileParams): Promise<string> {
     const commitData = {
         message,
@@ -153,6 +151,7 @@ export async function commitFile({ token, owner, repo, branch, path, content, me
     
     return result.content.sha;
 }
+
 
 interface CreatePullRequestParams {
   token: string;
@@ -171,7 +170,6 @@ export async function createPullRequest({ token, owner, repo, title, body, head,
     head,
     base,
   };
-
   return githubFetch<PullRequest>(`/repos/${owner}/${repo}/pulls`, token, {
     method: 'POST',
     body: JSON.stringify(prData),

@@ -2,7 +2,6 @@ import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { AuthModal } from './components/AuthModal';
 import { FileExplorer } from './components/FileExplorer';
 import { EditorCanvas } from './components/EditorCanvas';
-import { TerminalRunner } from './components/TerminalRunner';
 import { fetchAllRepos, fetchRepoTree, getFileContent, commitFile, getRepoBranches, createBranch, createPullRequest } from './services/githubService';
 import { editCodeWithAI } from './services/geminiService';
 import { GithubRepo, UnifiedFileTree, SelectedFile, Alert, Branch } from './types';
@@ -18,12 +17,6 @@ export default function App() {
   const [alert, setAlert] = useState<Alert | null>(null);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [currentBranch, setCurrentBranch] = useState<string | null>(null);
-  const [repoToRun, setRepoToRun] = useState<GithubRepo | null>(null);
-  const [isTerminalOpen, setIsTerminalOpen] = useState(false);
-
-  const mainPanelRef = useRef<HTMLDivElement>(null);
-  const terminalPanelRef = useRef<HTMLDivElement>(null);
-  const resizerRef = useRef<HTMLDivElement>(null);
 
   const handleTokenSubmit = useCallback(async (submittedToken: string) => {
     if (!submittedToken) return;
@@ -47,7 +40,6 @@ export default function App() {
       });
 
       await Promise.all(repoPromises);
-
       setFileTree(newFileTree);
       showAlert('success', 'Successfully loaded all repositories.');
     } catch (error) {
@@ -95,11 +87,6 @@ export default function App() {
       setLoadingMessage('');
     }
   }, [token, fileTree, selectedFile, currentBranch]);
-
-  const handleRepoRun = useCallback((repo: GithubRepo) => {
-    setRepoToRun(repo);
-    setIsTerminalOpen(true);
-  }, []);
 
   const handleAiEdit = useCallback(async (currentCode: string, instruction: string): Promise<string> => {
     setIsLoading(true);
@@ -212,44 +199,6 @@ export default function App() {
     setAlert({ type, message });
   };
 
-  // Resizer logic
-  useEffect(() => {
-    const main = mainPanelRef.current;
-    const terminal = terminalPanelRef.current;
-    const resizer = resizerRef.current;
-
-    if (!main || !terminal || !resizer || !isTerminalOpen) return;
-
-    const handleMouseMove = (e: MouseEvent) => {
-        const newMainHeight = e.clientY - main.offsetTop;
-        const totalHeight = main.parentElement?.clientHeight || 0;
-        if (newMainHeight > 100 && newMainHeight < totalHeight - 100) {
-            main.style.height = `${newMainHeight}px`;
-            terminal.style.height = `${totalHeight - newMainHeight}px`;
-        }
-    };
-
-    const handleMouseUp = () => {
-        window.removeEventListener('mousemove', handleMouseMove);
-        window.removeEventListener('mouseup', handleMouseUp);
-    };
-
-    const handleMouseDown = (e: MouseEvent) => {
-        e.preventDefault();
-        window.addEventListener('mousemove', handleMouseMove);
-        window.addEventListener('mouseup', handleMouseUp);
-    };
-
-    resizer.addEventListener('mousedown', handleMouseDown as EventListener);
-
-    return () => {
-        resizer.removeEventListener('mousedown', handleMouseDown as EventListener);
-        // Clean up global listeners if component unmounts while resizing
-        window.removeEventListener('mousemove', handleMouseMove);
-        window.removeEventListener('mouseup', handleMouseUp);
-    };
-  }, [isTerminalOpen]);
-
   if (!token) {
     return <AuthModal onSubmit={handleTokenSubmit} isLoading={isLoading} />;
   }
@@ -264,12 +213,11 @@ export default function App() {
       )}
       <AlertPopup alert={alert} onClose={() => setAlert(null)} />
       
-      <div ref={mainPanelRef} className="flex" style={{ height: isTerminalOpen ? '60%' : '100%' }}>
+      <div className="flex flex-grow min-h-0">
         <div className="w-1/4 bg-gray-900 border-r border-gray-700 overflow-y-auto">
           <FileExplorer 
             fileTree={fileTree} 
             onFileSelect={handleFileSelect} 
-            onRepoRun={handleRepoRun}
             selectedFilePath={selectedFile?.path} 
             selectedRepo={selectedFile?.repoFullName}
           />
@@ -288,22 +236,6 @@ export default function App() {
           />
         </div>
       </div>
-      
-      {isTerminalOpen && (
-        <>
-            <div ref={resizerRef} className="h-2 bg-gray-700 cursor-row-resize hover:bg-indigo-500 transition-colors w-full"></div>
-            <div ref={terminalPanelRef} className="bg-gray-900" style={{ height: '40%' }}>
-                {repoToRun && token && (
-                    <TerminalRunner 
-                        key={repoToRun.id} // Re-mount component when repo changes
-                        repo={repoToRun}
-                        token={token} 
-                        onClose={() => setIsTerminalOpen(false)}
-                    />
-                )}
-            </div>
-        </>
-      )}
     </div>
   );
 }

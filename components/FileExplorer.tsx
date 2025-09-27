@@ -2,12 +2,10 @@ import React, { useState } from 'react';
 import { UnifiedFileTree, DirNode, FileNode, GithubRepo } from '../types';
 import { FolderIcon, FolderOpenIcon } from './icons/FolderIcon';
 import { FileIcon } from './icons/FileIcon';
-import { PlayIcon } from './icons/PlayIcon';
 
 interface FileExplorerProps {
   fileTree: UnifiedFileTree;
   onFileSelect: (repoFullName: string, path: string) => void;
-  onRepoRun: (repo: GithubRepo) => void;
   selectedFilePath?: string | null;
   selectedRepo?: string | null;
 }
@@ -67,10 +65,9 @@ const RepoNode: React.FC<{
     repo: GithubRepo;
     tree: (DirNode | FileNode)[];
     onFileSelect: (repoFullName: string, path: string) => void;
-    onRepoRun: (repo: GithubRepo) => void;
     selectedFilePath?: string | null;
     selectedRepo?: string | null;
-}> = ({ repo, tree, onFileSelect, onRepoRun, selectedFilePath, selectedRepo }) => {
+}> = ({ repo, tree, onFileSelect, selectedFilePath, selectedRepo }) => {
     const isRepoSelected = repo.full_name === selectedRepo;
     const [isOpen, setIsOpen] = useState(isRepoSelected);
 
@@ -88,14 +85,6 @@ const RepoNode: React.FC<{
                     {isOpen ? <FolderOpenIcon className="w-5 h-5 mr-2" /> : <FolderIcon className="w-5 h-5 mr-2" />}
                     {repo.full_name}
                 </h3>
-                <button 
-                    onClick={() => onRepoRun(repo)}
-                    className="opacity-0 group-hover:opacity-100 transition-opacity text-green-400 hover:text-green-300 p-1"
-                    title={`Run ${repo.name}`}
-                    aria-label={`Run ${repo.name}`}
-                >
-                    <PlayIcon className="w-5 h-5" />
-                </button>
             </div>
             {isOpen && (
                 <div className="pl-4 border-l border-gray-700 ml-2">
@@ -115,7 +104,7 @@ const RepoNode: React.FC<{
     );
 };
 
-export const FileExplorer: React.FC<FileExplorerProps> = ({ fileTree, onFileSelect, onRepoRun, selectedFilePath, selectedRepo }) => {
+export const FileExplorer: React.FC<FileExplorerProps> = ({ fileTree, onFileSelect, selectedFilePath, selectedRepo }) => {
   return (
     <div className="p-4 text-gray-300">
       <h2 className="text-xl font-bold mb-4 border-b border-gray-700 pb-2">Repositories</h2>
@@ -125,7 +114,6 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({ fileTree, onFileSele
             repo={fileTree[repoFullName].repo}
             tree={fileTree[repoFullName].tree}
             onFileSelect={onFileSelect}
-            onRepoRun={onRepoRun}
             selectedFilePath={selectedFilePath}
             selectedRepo={selectedRepo}
         />

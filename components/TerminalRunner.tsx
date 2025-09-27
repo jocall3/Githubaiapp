@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { GithubRepo } from '../types';
-import { WebContainer } from '@webcontainer/api';
+import { WebContainer } from '@web-std/webcontainer';
 import { Spinner } from './Spinner';
 
 // Make external libraries available from window object
