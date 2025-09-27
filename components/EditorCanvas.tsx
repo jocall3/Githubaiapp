@@ -1,6 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { SelectedFile, Branch } from '../types';
 import { Spinner } from './Spinner';
+import { AiChatModal } from './AiChatModal';
+import { CommitModal } from './CommitModal';
+import { SparklesIcon } from './icons/SparklesIcon';
 
 interface EditorCanvasProps {
   selectedFile: SelectedFile | null;
@@ -25,35 +28,37 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
   onCreateBranch,
   onCreatePullRequest,
 }) => {
-  const [aiInstruction, setAiInstruction] = useState('');
-  const [commitMessage, setCommitMessage] = useState('');
+  const [editedContent, setEditedContent] = useState('');
+  const [isAiModalOpen, setIsAiModalOpen] = useState(false);
+  const [isCommitModalOpen, setIsCommitModalOpen] = useState(false);
+  
   const [newBranchName, setNewBranchName] = useState('');
   const [isCreatingBranch, setIsCreatingBranch] = useState(false);
+  
   const [isCreatingPR, setIsCreatingPR] = useState(false);
   const [prTitle, setPrTitle] = useState('');
   const [prBody, setPrBody] = useState('');
-  const [editedContent, setEditedContent] = useState('');
 
   useEffect(() => {
     if (selectedFile) {
-        const defaultCommitMsg = `Update ${selectedFile.path}`;
-        setCommitMessage(defaultCommitMsg);
-        setPrTitle(defaultCommitMsg);
+        const defaultPrTitle = `Update ${selectedFile.path}`;
+        setPrTitle(defaultPrTitle);
         setEditedContent(selectedFile.content);
     }
   }, [selectedFile]);
   
   const hasChanges = selectedFile ? editedContent !== selectedFile.content : false;
 
-  const handleAiEditClick = async () => {
-    if (!aiInstruction.trim()) return;
-    const newCode = await onAiEdit(editedContent, aiInstruction);
+  const handleAiSubmit = async (instruction: string) => {
+    if (!instruction.trim()) return;
+    const newCode = await onAiEdit(editedContent, instruction);
     setEditedContent(newCode);
   };
 
-  const handleCommitClick = async () => {
+  const handleCommitSubmit = async (commitMessage: string) => {
     if (!commitMessage.trim() || !selectedFile) return;
     await onCommit(commitMessage, editedContent);
+    setIsCommitModalOpen(false); // Close modal on success
   };
 
   const handleCreateBranchClick = async () => {
@@ -69,7 +74,7 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
     setIsCreatingPR(false); // Hide form on success
     setPrBody(''); // Clear body
   };
-
+  
   if (!selectedFile) {
     return (
       <div className="flex-grow flex items-center justify-center bg-gray-850 text-gray-500">
@@ -77,143 +82,132 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
       </div>
     );
   }
+  
+  const defaultCommitMessage = `Update ${selectedFile.path}`;
 
   return (
-    <div className="flex flex-grow h-full">
-      {/* Editor Panel */}
-      <div className="w-2/3 flex flex-col bg-gray-850 p-4">
-        <div className="mb-2">
-            <h3 className="text-lg font-semibold text-gray-200">{selectedFile.path}</h3>
-            <p className="text-sm text-gray-400">{selectedFile.repoFullName}</p>
+    <div className="flex flex-col h-full bg-gray-850 relative">
+      {/* Header */}
+      <div className="flex items-center justify-between p-2 border-b border-gray-700 bg-gray-900 flex-wrap gap-2">
+        <div>
+          <h3 className="text-md font-semibold text-gray-200">{selectedFile.path}</h3>
+          <p className="text-xs text-gray-400">{selectedFile.repoFullName}</p>
         </div>
+
+        <div className="flex items-center gap-2 flex-wrap">
+          {/* Branch Controls */}
+          <div className="flex items-center gap-2">
+            <select
+              id="branch-select"
+              value={currentBranch || ''}
+              onChange={(e) => onBranchChange(e.target.value)}
+              disabled={isLoading}
+              className="bg-gray-800 p-2 rounded-md text-sm border border-gray-700 focus:outline-none focus:ring-2 focus:ring-cyan-500"
+            >
+              {branches.map(b => <option key={b.name} value={b.name}>{b.name}</option>)}
+            </select>
+            {!isCreatingBranch ? (
+              <button onClick={() => setIsCreatingBranch(true)} className="text-sm text-cyan-400 hover:underline px-3 py-1.5" disabled={isLoading}>New Branch</button>
+            ) : (
+               <div className="flex gap-2 items-center">
+                 <input
+                    type="text"
+                    value={newBranchName}
+                    onChange={(e) => setNewBranchName(e.target.value)}
+                    placeholder="new-branch-name"
+                    className="bg-gray-800 p-2 rounded-md text-sm border border-gray-700 focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                  />
+                  <button onClick={handleCreateBranchClick} disabled={isLoading || !newBranchName.trim()} className="text-sm bg-cyan-600 text-white font-semibold py-1 px-2 rounded hover:bg-cyan-700 disabled:bg-gray-500">Create</button>
+                  <button onClick={() => setIsCreatingBranch(false)} className="text-sm bg-gray-600 text-white font-semibold py-1 px-2 rounded hover:bg-gray-700">X</button>
+               </div>
+            )}
+          </div>
+          
+          {/* Commit Button */}
+          <button
+            onClick={() => setIsCommitModalOpen(true)}
+            disabled={isLoading || !hasChanges}
+            className="bg-green-600 text-white font-semibold py-2 px-4 rounded-md hover:bg-green-700 disabled:bg-gray-500 disabled:cursor-not-allowed"
+          >
+            Commit Changes
+          </button>
+
+          {/* PR Button */}
+          {currentBranch && currentBranch !== selectedFile.defaultBranch && (
+             <button 
+                onClick={() => setIsCreatingPR(!isCreatingPR)} 
+                className="bg-cyan-600 text-white font-semibold py-2 px-4 rounded-md hover:bg-cyan-700 disabled:bg-gray-500"
+                disabled={isLoading}
+            >
+                {isCreatingPR ? 'Cancel PR' : 'Create Pull Request'}
+            </button>
+          )}
+        </div>
+      </div>
+      
+      {/* Create PR Form (inline) */}
+      {isCreatingPR && (
+        <div className="p-4 bg-gray-800 border-b border-gray-700">
+            <h4 className="font-semibold mb-2 text-gray-200">New Pull Request</h4>
+              <p className="text-xs text-gray-400 mb-2">
+                From <code className="bg-gray-700 p-1 rounded-sm text-xs">{currentBranch}</code> into <code className="bg-gray-700 p-1 rounded-sm text-xs">{selectedFile.defaultBranch}</code>
+            </p>
+            <input
+                type="text"
+                value={prTitle}
+                onChange={(e) => setPrTitle(e.target.value)}
+                placeholder="Pull request title"
+                className="w-full bg-gray-900 p-2 rounded-md mb-2 text-sm border border-gray-600 focus:outline-none focus:ring-2 focus:ring-cyan-500"
+            />
+            <textarea
+                value={prBody}
+                onChange={(e) => setPrBody(e.target.value)}
+                placeholder="Describe your changes..."
+                className="w-full h-24 bg-gray-900 p-2 rounded-md mb-2 text-sm border border-gray-600 focus:outline-none focus:ring-2 focus:ring-cyan-500 resize-none"
+            />
+            <div className="flex gap-2">
+                <button onClick={handleCreatePrClick} disabled={isLoading || !prTitle.trim()} className="text-sm bg-cyan-600 text-white font-semibold py-1 px-2 rounded hover:bg-cyan-700 disabled:bg-gray-500 flex items-center justify-center">
+                    {isLoading ? <Spinner className="h-4 w-4" /> : 'Submit Pull Request'}
+                </button>
+            </div>
+        </div>
+      )}
+
+      {/* Editor */}
+      <div className="flex-grow p-4">
         <textarea
           value={editedContent}
           onChange={(e) => setEditedContent(e.target.value)}
-          className="flex-grow w-full border border-gray-700 rounded-md bg-gray-950 text-gray-200 p-4 font-mono text-sm resize-none focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          className="w-full h-full border border-gray-700 rounded-md bg-gray-950 text-gray-200 p-4 font-mono text-sm resize-none focus:outline-none focus:ring-2 focus:ring-indigo-500"
           spellCheck="false"
         />
       </div>
 
-      {/* Control Panel */}
-      <div className="w-1/3 flex flex-col bg-gray-900 p-6 border-l border-gray-700 overflow-y-auto">
-        {/* AI Edit Section */}
-        <div className="flex-grow min-h-0">
-          <h3 className="text-xl font-bold mb-4 text-indigo-400">AI Assistant</h3>
-          <p className="text-gray-400 mb-2 text-sm">Describe the changes you want to make:</p>
-          <textarea
-            value={aiInstruction}
-            onChange={(e) => setAiInstruction(e.target.value)}
-            placeholder="e.g., 'Refactor this function to use async/await'"
-            className="w-full h-32 bg-gray-800 p-3 rounded-md mb-4 text-sm border border-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none"
-          />
-          <button
-            onClick={handleAiEditClick}
-            disabled={isLoading || !aiInstruction.trim()}
-            className="w-full bg-indigo-600 text-white font-semibold py-2 px-4 rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900 focus:ring-indigo-500 disabled:bg-gray-500 disabled:cursor-not-allowed transition-colors flex items-center justify-center"
-          >
-            {isLoading ? <Spinner /> : 'Edit with AI'}
-          </button>
-        </div>
-        
-        <div className="border-t border-gray-700 pt-6 space-y-6">
-            {/* Branch Management Section */}
-            <div>
-              <h3 className="text-xl font-bold mb-4 text-cyan-400">Source Control</h3>
-              <label htmlFor="branch-select" className="block text-sm font-medium text-gray-400 mb-2">Current Branch:</label>
-              <select
-                id="branch-select"
-                value={currentBranch || ''}
-                onChange={(e) => onBranchChange(e.target.value)}
-                disabled={isLoading}
-                className="w-full bg-gray-800 p-3 rounded-md mb-2 text-sm border border-gray-700 focus:outline-none focus:ring-2 focus:ring-cyan-500"
-              >
-                {branches.map(b => <option key={b.name} value={b.name}>{b.name}</option>)}
-              </select>
+      {/* AI Edit FAB */}
+      <button
+        onClick={() => setIsAiModalOpen(true)}
+        className="absolute bottom-6 right-6 bg-indigo-600 text-white rounded-full p-4 shadow-lg hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-4 focus:ring-offset-gray-850 focus:ring-indigo-500 transition-transform hover:scale-110"
+        aria-label="Edit with AI"
+      >
+        <SparklesIcon className="h-6 w-6" />
+      </button>
 
-              {!isCreatingBranch ? (
-                <button onClick={() => setIsCreatingBranch(true)} className="text-sm text-cyan-400 hover:underline disabled:text-gray-500 disabled:cursor-not-allowed" disabled={isLoading}>Create new branch</button>
-              ) : (
-                <div className="mt-2 p-3 bg-gray-800 rounded-md border border-gray-700">
-                    <input
-                        type="text"
-                        value={newBranchName}
-                        onChange={(e) => setNewBranchName(e.target.value)}
-                        placeholder="new-branch-name"
-                        className="w-full bg-gray-900 p-2 rounded-md mb-2 text-sm border border-gray-600 focus:outline-none focus:ring-2 focus:ring-cyan-500"
-                    />
-                    <div className="flex gap-2">
-                        <button onClick={handleCreateBranchClick} disabled={isLoading || !newBranchName.trim()} className="flex-1 text-sm bg-cyan-600 text-white font-semibold py-1 px-2 rounded hover:bg-cyan-700 disabled:bg-gray-500">Create</button>
-                        <button onClick={() => setIsCreatingBranch(false)} className="flex-1 text-sm bg-gray-600 text-white font-semibold py-1 px-2 rounded hover:bg-gray-700">Cancel</button>
-                    </div>
-                </div>
-              )}
-
-              {/* Pull Request Section */}
-              {currentBranch && currentBranch !== selectedFile.defaultBranch && (
-                <div className="mt-4 pt-4 border-t border-gray-700">
-                    {!isCreatingPR ? (
-                        <button 
-                            onClick={() => setIsCreatingPR(true)} 
-                            className="w-full text-sm bg-cyan-600 text-white font-semibold py-2 px-4 rounded hover:bg-cyan-700 disabled:bg-gray-500"
-                            disabled={isLoading}
-                        >
-                            Create Pull Request
-                        </button>
-                    ) : (
-                        <div className="p-3 bg-gray-800 rounded-md border border-gray-700">
-                            <h4 className="font-semibold mb-2 text-gray-200">New Pull Request</h4>
-                             <p className="text-xs text-gray-400 mb-2">
-                                From <code className="bg-gray-700 p-1 rounded-sm text-xs">{currentBranch}</code> into <code className="bg-gray-700 p-1 rounded-sm text-xs">{selectedFile.defaultBranch}</code>
-                            </p>
-                            <input
-                                type="text"
-                                value={prTitle}
-                                onChange={(e) => setPrTitle(e.target.value)}
-                                placeholder="Pull request title"
-                                className="w-full bg-gray-900 p-2 rounded-md mb-2 text-sm border border-gray-600 focus:outline-none focus:ring-2 focus:ring-cyan-500"
-                            />
-                            <textarea
-                                value={prBody}
-                                onChange={(e) => setPrBody(e.target.value)}
-                                placeholder="Describe your changes..."
-                                className="w-full h-24 bg-gray-900 p-2 rounded-md mb-2 text-sm border border-gray-600 focus:outline-none focus:ring-2 focus:ring-cyan-500 resize-none"
-                            />
-                            <div className="flex gap-2">
-                                <button onClick={handleCreatePrClick} disabled={isLoading || !prTitle.trim()} className="flex-1 text-sm bg-cyan-600 text-white font-semibold py-1 px-2 rounded hover:bg-cyan-700 disabled:bg-gray-500 flex items-center justify-center">
-                                    {isLoading ? <Spinner className="h-4 w-4" /> : 'Submit'}
-                                </button>
-                                <button onClick={() => setIsCreatingPR(false)} className="flex-1 text-sm bg-gray-600 text-white font-semibold py-1 px-2 rounded hover:bg-gray-700">Cancel</button>
-                            </div>
-                        </div>
-                    )}
-                </div>
-              )}
-
-            </div>
-
-            {/* Commit Section */}
-            <div>
-              <h3 className="text-xl font-bold mb-4 text-green-400">Commit Changes</h3>
-              <p className={`text-sm mb-2 ${hasChanges ? 'text-yellow-400' : 'text-gray-500'}`}>
-                    {hasChanges ? 'You have unsaved changes.' : 'No changes to commit.'}
-                </p>
-              <p className="text-gray-400 mb-2 text-sm">Commit message:</p>
-              <input
-                type="text"
-                value={commitMessage}
-                onChange={(e) => setCommitMessage(e.target.value)}
-                className="w-full bg-gray-800 p-3 rounded-md mb-4 text-sm border border-gray-700 focus:outline-none focus:ring-2 focus:ring-green-500"
-              />
-              <button
-                onClick={handleCommitClick}
-                disabled={isLoading || !hasChanges || !commitMessage.trim()}
-                className="w-full bg-green-600 text-white font-semibold py-2 px-4 rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900 focus:ring-green-500 disabled:bg-gray-500 disabled:cursor-not-allowed transition-colors flex items-center justify-center"
-              >
-                {isLoading ? <Spinner /> : 'Commit to GitHub'}
-              </button>
-            </div>
-        </div>
-      </div>
+      {/* Modals */}
+      {isAiModalOpen && (
+        <AiChatModal
+          onClose={() => setIsAiModalOpen(false)}
+          onSubmit={handleAiSubmit}
+          isLoading={isLoading}
+        />
+      )}
+      {isCommitModalOpen && (
+        <CommitModal
+          onClose={() => setIsCommitModalOpen(false)}
+          onCommit={handleCommitSubmit}
+          isLoading={isLoading}
+          defaultMessage={defaultCommitMessage}
+        />
+      )}
     </div>
   );
 };

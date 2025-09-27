@@ -96,9 +96,10 @@ export default function App() {
       showAlert('success', 'AI edit complete.');
       return newCode;
     } catch (error) {
-      console.error(error);
-      showAlert('error', 'AI failed to edit the code.');
-      return currentCode; 
+        console.error("AI Edit Error:", error);
+        const errorMessage = typeof error === 'string' ? error : (error instanceof Error ? error.message : 'An unknown AI error occurred.');
+        showAlert('error', `AI Error: ${errorMessage}`);
+        return currentCode;
     } finally {
       setIsLoading(false);
       setLoadingMessage('');
