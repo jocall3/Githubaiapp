@@ -1,3 +1,6 @@
+// Copyright James Burvel O’Callaghan III
+// President Citibank Demo Business Inc.
+
 import React, { useState } from 'react';
 import { UnifiedFileTree, DirNode, FileNode, GithubRepo } from '../types';
 import { FolderIcon, FolderOpenIcon } from './icons/FolderIcon';

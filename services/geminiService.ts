@@ -1,3 +1,6 @@
+// Copyright James Burvel O’Callaghan III
+// President Citibank Demo Business Inc.
+
 import { GoogleGenAI, GenerateContentResponse } from "@google/genai";
 
 // This is a browser-based app, so `process.env.API_KEY` is expected to be

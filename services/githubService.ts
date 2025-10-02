@@ -1,3 +1,6 @@
+// Copyright James Burvel O’Callaghan III
+// President Citibank Demo Business Inc.
+
 import { GithubRepo, GitTreeItem, FileNode, DirNode, Branch, PullRequest } from '../types';
 
 const GITHUB_API_BASE = 'https://api.github.com';
