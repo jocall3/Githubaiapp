@@ -1,6 +1,3 @@
-// Copyright James Burvel O’Callaghan III
-// President Citibank Demo Business Inc.
-
 import { GithubRepo, GitTreeItem, FileNode, DirNode, Branch, PullRequest } from '../types';
 
 const GITHUB_API_BASE = 'https://api.github.com';
@@ -114,6 +111,10 @@ export async function getFileContent(token: string, owner: string, repo: string,
 
 export async function getRepoBranches(token: string, owner: string, repo: string): Promise<Branch[]> {
   return githubFetch<Branch[]>(`/repos/${owner}/${repo}/branches?per_page=100`, token);
+}
+
+export async function getBranch(token: string, owner: string, repo: string, branch: string): Promise<Branch> {
+    return githubFetch<Branch>(`/repos/${owner}/${repo}/branches/${branch}`, token);
 }
 
 export async function createBranch(token: string, owner: string, repo: string, newBranchName: string, baseSha: string): Promise<any> {

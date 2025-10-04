@@ -1,6 +1,3 @@
-// Copyright James Burvel O’Callaghan III
-// President Citibank Demo Business Inc.
-
 import React, { useState } from 'react';
 import { Spinner } from './Spinner';
 
@@ -14,7 +11,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onSubmit, isLoading }) => 
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    onSubmit(token);
+    onSubmit(token.trim());
   };
 
   return (
@@ -37,9 +34,22 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onSubmit, isLoading }) => 
               required
             />
           </div>
-          <p className="text-xs text-gray-500 mb-6">
-            Your token is used only for API requests and is not stored. A classic token with the full <code className="bg-gray-700 p-1 rounded-sm text-xs">repo</code> scope is required.
-          </p>
+          <div className="text-xs text-gray-500 mb-6 space-y-2">
+            <p>
+                Your token is used only for API requests and is not stored.
+            </p>
+            <p>
+                A <strong className="text-gray-400">classic</strong> token with the full <code className="bg-gray-700 p-1 rounded-sm text-xs">repo</code> scope is required. Fine-grained tokens are not supported.
+            </p>
+            <a 
+                href="https://github.com/settings/tokens/new?scopes=repo" 
+                target="_blank" 
+                rel="noopener noreferrer" 
+                className="text-indigo-400 hover:text-indigo-300 underline"
+            >
+                Create a new classic token here.
+            </a>
+          </div>
           <button
             type="submit"
             disabled={isLoading || !token}

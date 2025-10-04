@@ -1,6 +1,3 @@
-// Copyright James Burvel O’Callaghan III
-// President Citibank Demo Business Inc.
-
 import React, { useState, useEffect, useRef } from 'react';
 import { GithubRepo } from '../types';
 import { WebContainer } from '@web-std/webcontainer';

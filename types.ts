@@ -1,6 +1,3 @@
-// Copyright James Burvel O’Callaghan III
-// President Citibank Demo Business Inc.
-
 export interface GithubRepo {
   id: number;
   name: string;
