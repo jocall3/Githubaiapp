@@ -4,12 +4,13 @@ import { FileExplorer } from './components/FileExplorer';
 import { EditorCanvas } from './components/EditorCanvas';
 import { fetchAllRepos, fetchRepoTree, getFileContent, commitFile, getRepoBranches, createBranch, createPullRequest, getBranch } from './services/githubService';
 import { editFileWithAI, bulkEditFileWithAI } from './services/geminiService';
-import { GithubRepo, UnifiedFileTree, SelectedFile, Alert, Branch, FileNode, DirNode } from './types';
+import { GithubRepo, UnifiedFileTree, SelectedFile, Alert, Branch, FileNode, DirNode, BulkEditJob } from './types';
 import { Spinner } from './components/Spinner';
 import { AlertPopup } from './components/AlertPopup';
-import { BulkAiEditModal } from './components/BulkAiEditModal';
+import { MultiFileAiEditModal } from './components/BulkAiEditModal';
+import { BulkEditProgress } from './components/BulkEditProgress';
 
-const getAllFilePaths = (nodes: (DirNode | FileNode)[]): string[] => {
+export const getAllFilePaths = (nodes: (DirNode | FileNode)[]): string[] => {
     let paths: string[] = [];
     for (const node of nodes) {
         if (node.type === 'file') {
@@ -36,7 +37,11 @@ export default function App() {
   const [branchesByRepo, setBranchesByRepo] = useState<Record<string, Branch[]>>({});
   const [currentBranchByRepo, setCurrentBranchByRepo] = useState<Record<string, string>>({});
 
-  const [bulkEditRepo, setBulkEditRepo] = useState<string | null>(null);
+  const [isMultiEditModalOpen, setMultiEditModalOpen] = useState(false);
+  const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
+
+  const [isBulkEditing, setIsBulkEditing] = useState(false);
+  const [bulkEditJobs, setBulkEditJobs] = useState<BulkEditJob[]>([]);
   
   const activeFile = openFiles.find(f => (f.repoFullName + '::' + f.path) === activeFileKey);
   const currentBranch = activeFile ? currentBranchByRepo[activeFile.repoFullName] : null;
@@ -75,6 +80,10 @@ export default function App() {
     }
   }, []);
   
+  const showAlert = (type: 'success' | 'error', message: string) => {
+    setAlert({ type, message });
+  };
+    
   const handleOpenFile = useCallback(async (repoFullName: string, path: string, branch?: string) => {
     const fileKey = `${repoFullName}::${path}`;
     if (openFiles.some(f => f.repoFullName + '::' + f.path === fileKey)) {
@@ -275,136 +284,207 @@ export default function App() {
     }
   }, [token, activeFile, currentBranch]);
 
-  const handleStartBulkEdit = useCallback((repoFullName: string) => {
-    setBulkEditRepo(repoFullName);
+ const handleFileSelection = useCallback((fileKey: string, isSelected: boolean) => {
+    setSelectedFiles(prev => {
+      const newSet = new Set(prev);
+      if (isSelected) {
+        newSet.add(fileKey);
+      } else {
+        // Fix: Corrected typo from 'key' to 'fileKey' to match the function parameter.
+        newSet.delete(fileKey);
+      }
+      return newSet;
+    });
   }, []);
 
-  const handleBulkEditSubmit = useCallback(async (instruction: string, newBranchName: string) => {
-    if (!token || !bulkEditRepo) return;
-    
-    setIsLoading(true);
-    const [owner, repo] = bulkEditRepo.split('/');
-    const repoData = fileTree[bulkEditRepo]?.repo;
-    if (!repoData) {
-        showAlert('error', 'Could not find repository data.');
-        setIsLoading(false);
-        return;
-    }
-    
-    try {
-        setLoadingMessage(`Fetching base branch info...`);
-        const defaultBranchInfo = await getBranch(token, owner, repo, repoData.default_branch);
-
-        setLoadingMessage(`Creating new branch: ${newBranchName}...`);
-        await createBranch(token, owner, repo, newBranchName, defaultBranchInfo.commit.sha);
-
-        const filePaths = getAllFilePaths(fileTree[bulkEditRepo].tree);
-        const totalFiles = filePaths.length;
-
-        for (let i = 0; i < totalFiles; i++) {
-            const path = filePaths[i];
-            
-            try {
-                setLoadingMessage(`[${i + 1}/${totalFiles}] Fetching ${path}...`);
-                const fileContent = await getFileContent(token, owner, repo, path, repoData.default_branch);
-
-                setLoadingMessage(`[${i + 1}/${totalFiles}] AI editing ${path}...`);
-                let newContent = '';
-                await bulkEditFileWithAI(fileContent.content, instruction, path, (chunk) => {
-                    newContent += chunk;
-                });
-                
-                if (newContent.trim() === fileContent.content.trim()) {
-                    setLoadingMessage(`[${i + 1}/${totalFiles}] No changes for ${path}, skipping commit.`);
-                    await new Promise(resolve => setTimeout(resolve, 50)); 
-                    continue;
-                }
-                
-                setLoadingMessage(`[${i + 1}/${totalFiles}] Committing changes to ${path}...`);
-                await commitFile({
-                    token,
-                    owner,
-                    repo,
-                    branch: newBranchName,
-                    path: fileContent.path,
-                    content: newContent,
-                    message: `[AI] Bulk edit: ${path}`,
-                    // Note: We need to fetch the sha for the file on the *new* branch if it exists,
-                    // but since we process one by one, we can use the original sha for the first commit of each file.
-                    sha: fileContent.sha,
-                });
-            } catch (fileError) {
-                 console.error(`Failed to process file ${path}:`, fileError);
-                 showAlert('error', `Skipping file ${path}: ${(fileError as Error).message}`);
+  const handleDirectorySelection = useCallback((nodes: (DirNode | FileNode)[], repoFullName: string, shouldSelect: boolean) => {
+    const allPaths = getAllFilePaths(nodes);
+    setSelectedFiles(prev => {
+        const newSet = new Set(prev);
+        for (const path of allPaths) {
+            const key = `${repoFullName}::${path}`;
+            if (shouldSelect) {
+                newSet.add(key);
+            } else {
+                newSet.delete(key);
             }
         }
+        return newSet;
+    });
+  }, []);
 
-        showAlert('success', `Bulk edit complete! All changes are on branch '${newBranchName}'.`);
+  const handleMultiFileEditSubmit = useCallback(async (instruction: string) => {
+    if (!token || selectedFiles.size === 0) return;
+    
+    setMultiEditModalOpen(false);
+    
+    const paths = Array.from(selectedFiles);
+    const initialJobs: BulkEditJob[] = paths.map(fullPath => {
+        const [repoFullName, path] = fullPath.split('::');
+        return {
+            id: fullPath,
+            repoFullName,
+            path,
+            status: 'queued',
+            content: '',
+            error: null,
+        };
+    });
+    setBulkEditJobs(initialJobs);
+    setIsBulkEditing(true);
+    setSelectedFiles(new Set());
 
-    } catch (error) {
-        console.error(error);
-        showAlert('error', `Bulk edit failed: ${(error as Error).message}`);
-    } finally {
-        setIsLoading(false);
-        setLoadingMessage('');
-    }
-  }, [token, bulkEditRepo, fileTree]);
-  
-  const showAlert = (type: 'success' | 'error', message: string) => {
-    setAlert({ type, message });
-  };
+    const processFile = async (jobId: string) => {
+        setBulkEditJobs(prev => prev.map(j => j.id === jobId ? { ...j, status: 'processing' } : j));
+        
+        const job = initialJobs.find(j => j.id === jobId);
+        if (!job || !token) return;
 
-  if (!token) {
-    return <AuthModal onSubmit={handleTokenSubmit} isLoading={isLoading} />;
-  }
+        const { repoFullName, path } = job;
+        const [owner, repo] = repoFullName.split('/');
+        const repoData = fileTree[repoFullName]?.repo;
+        if (!repoData) {
+            setBulkEditJobs(prev => prev.map(j => j.id === jobId ? { ...j, status: 'failed', error: 'Repo data not found' } : j));
+            return;
+        }
+
+        try {
+            const branch = currentBranchByRepo[repoFullName] || repoData.default_branch;
+            const fileContent = await getFileContent(token, owner, repo, path, branch);
+
+            let newContent = '';
+            const handleChunk = (chunk: string) => {
+                newContent += chunk;
+                setBulkEditJobs(prev => prev.map(j => j.id === jobId ? { ...j, content: newContent } : j));
+            };
+
+            await bulkEditFileWithAI(fileContent.content, instruction, path, handleChunk);
+            
+            if (newContent.trim() === fileContent.content.trim() || newContent.trim() === '') {
+                setBulkEditJobs(prev => prev.map(j => j.id === jobId ? { ...j, status: 'skipped' } : j));
+                return;
+            }
+            
+            await commitFile({
+                token, owner, repo, branch, path, content: newContent,
+                message: `[AI] Edit: ${path}`,
+                sha: fileContent.sha,
+            });
+            
+            setBulkEditJobs(prev => prev.map(j => j.id === jobId ? { ...j, status: 'success' } : j));
+
+            const committedFileKey = `${repoFullName}::${path}`;
+            const isOpen = openFiles.some(f => (f.repoFullName + '::' + f.path) === committedFileKey);
+            if (isOpen) {
+                const updatedFile = await getFileContent(token, owner, repo, path, branch);
+                 setOpenFiles(prev => prev.map(f => 
+                    (f.repoFullName + '::' + f.path) === committedFileKey 
+                    ? { ...f, content: updatedFile.content, editedContent: updatedFile.content, sha: updatedFile.sha } 
+                    : f
+                ));
+            }
+        } catch (err) {
+             const errorMessage = (err instanceof Error) ? err.message : 'An unknown error occurred.';
+             setBulkEditJobs(prev => prev.map(j => j.id === jobId ? { ...j, status: 'failed', error: errorMessage } : j));
+        }
+    };
+
+    const CONCURRENCY_LIMIT = 5;
+    const taskQueue = [...initialJobs];
+
+    const worker = async () => {
+        while (taskQueue.length > 0) {
+            const job = taskQueue.shift();
+            if (job) {
+                await processFile(job.id);
+            }
+        }
+    };
+
+    const workers = Array(CONCURRENCY_LIMIT).fill(null).map(worker);
+    await Promise.all(workers);
+
+    showAlert('success', 'Multi-file edit process completed.');
+    
+  }, [token, selectedFiles, fileTree, currentBranchByRepo, openFiles]);
 
   return (
-    <div className="flex flex-col h-screen font-sans">
-      {isLoading && (
-        <div className="absolute inset-0 bg-black bg-opacity-70 flex flex-col items-center justify-center z-50">
+    <div className="flex h-screen font-sans">
+      {!token ? (
+        <AuthModal onSubmit={handleTokenSubmit} isLoading={isLoading} />
+      ) : (
+        <>
+          <aside className="w-1/4 max-w-sm min-w-[300px] bg-gray-900 overflow-y-auto border-r border-gray-700 h-full">
+            <FileExplorer 
+              fileTree={fileTree} 
+              onFileSelect={handleOpenFile}
+              onStartMultiEdit={() => setMultiEditModalOpen(true)}
+              selectedRepo={activeFile?.repoFullName}
+              selectedFilePath={activeFile?.path}
+              selectedFiles={selectedFiles}
+              onFileSelection={handleFileSelection}
+              onDirectorySelection={handleDirectorySelection}
+            />
+          </aside>
+          <main className="flex-grow h-full">
+            <EditorCanvas 
+              openFiles={openFiles}
+              activeFile={activeFile || null}
+              onCommit={handleCommit}
+              onAiEdit={handleAiEdit}
+              onFileContentChange={handleFileContentChange}
+              onCloseFile={handleCloseFile}
+              onSetActiveFile={handleSetActiveFile}
+              isLoading={isLoading}
+              branches={branches}
+              currentBranch={currentBranch}
+              onBranchChange={handleBranchChange}
+              onCreateBranch={handleCreateBranch}
+              onCreatePullRequest={handleCreatePullRequest}
+            />
+          </main>
+        </>
+      )}
+
+      {isLoading && !isBulkEditing && (
+        <div className="fixed top-5 left-1/2 -translate-x-1/2 bg-gray-800 text-white px-6 py-3 rounded-lg shadow-lg z-50 flex items-center gap-4 animate-fade-in-down">
+          <style>{`
+            @keyframes fade-in-down {
+              0% {
+                opacity: 0;
+                transform: translate(-50%, -20px);
+              }
+              100% {
+                opacity: 1;
+                transform: translate(-50%, 0);
+              }
+            }
+            .animate-fade-in-down {
+              animation: fade-in-down 0.5s ease-out forwards;
+            }
+          `}</style>
           <Spinner />
-          <p className="mt-4 text-lg text-gray-300">{loadingMessage}</p>
+          <p>{loadingMessage}</p>
         </div>
       )}
-      <AlertPopup alert={alert} onClose={() => setAlert(null)} />
-      
-      {bulkEditRepo && (
-        <BulkAiEditModal 
-            repoFullName={bulkEditRepo}
-            onClose={() => setBulkEditRepo(null)}
-            onSubmit={handleBulkEditSubmit}
-            isLoading={isLoading}
+
+      {alert && <AlertPopup alert={alert} onClose={() => setAlert(null)} />}
+
+      {isMultiEditModalOpen && (
+        <MultiFileAiEditModal
+          fileCount={selectedFiles.size}
+          onClose={() => setMultiEditModalOpen(false)}
+          onSubmit={handleMultiFileEditSubmit}
         />
       )}
 
-      <div className="flex flex-grow min-h-0">
-        <div className="w-1/4 bg-gray-900 border-r border-gray-700 overflow-y-auto">
-          <FileExplorer 
-            fileTree={fileTree} 
-            onFileSelect={handleOpenFile} 
-            onStartBulkEdit={handleStartBulkEdit}
-            selectedFilePath={activeFile?.path} 
-            selectedRepo={activeFile?.repoFullName}
-          />
-        </div>
-        <div className="w-3/4 flex flex-col">
-          <EditorCanvas
-            openFiles={openFiles}
-            activeFile={activeFile}
-            onCommit={handleCommit}
-            onAiEdit={handleAiEdit}
-            onFileContentChange={handleFileContentChange}
-            onCloseFile={handleCloseFile}
-            onSetActiveFile={handleSetActiveFile}
-            isLoading={isLoading}
-            branches={branches}
-            currentBranch={currentBranch}
-            onBranchChange={handleBranchChange}
-            onCreateBranch={handleCreateBranch}
-            onCreatePullRequest={handleCreatePullRequest}
-          />
-        </div>
-      </div>
+      {isBulkEditing && (
+        <BulkEditProgress 
+            jobs={bulkEditJobs}
+            onClose={() => setIsBulkEditing(false)}
+            isComplete={!bulkEditJobs.some(j => j.status === 'processing' || j.status === 'queued')}
+        />
+      )}
     </div>
   );
 }

@@ -46,7 +46,7 @@ export interface SelectedFile {
   repoFullName: string;
   path: string;
   content: string; // original content from git
-  editedContent: string; // content being edited in the UI
+  editedContent:string; // content being edited in the UI
   sha: string;
   defaultBranch: string;
 }
@@ -78,4 +78,15 @@ export interface PullRequest {
   number: number;
   title: string;
   state: 'open' | 'closed';
+}
+
+export type BulkEditJobStatus = 'queued' | 'processing' | 'success' | 'skipped' | 'failed';
+
+export interface BulkEditJob {
+  id: string; // repoFullName::path
+  repoFullName: string;
+  path: string;
+  status: BulkEditJobStatus;
+  content: string; // For streaming preview
+  error: string | null;
 }
