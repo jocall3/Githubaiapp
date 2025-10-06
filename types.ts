@@ -45,7 +45,8 @@ export type UnifiedFileTree = {
 export interface SelectedFile {
   repoFullName: string;
   path: string;
-  content: string; // decoded content
+  content: string; // original content from git
+  editedContent: string; // content being edited in the UI
   sha: string;
   defaultBranch: string;
 }

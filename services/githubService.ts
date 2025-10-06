@@ -139,10 +139,23 @@ interface CommitFileParams {
   message: string;
   sha: string; // The blob SHA of the file being replaced.
 }
+
+/**
+ * Encodes a UTF-8 string to Base64.
+ * This is necessary because the standard `btoa` function can throw an error
+ * if the string contains characters outside the Latin-1 range.
+ * @param str The string to encode.
+ * @returns The Base64 encoded string.
+ */
+function utf8_to_b64(str: string): string {
+  return btoa(unescape(encodeURIComponent(str)));
+}
+
+
 export async function commitFile({ token, owner, repo, branch, path, content, message, sha }: CommitFileParams): Promise<string> {
     const commitData = {
         message,
-        content: btoa(content), // base64 encode the content
+        content: utf8_to_b64(content), // base64 encode the content, supporting UTF-8
         sha,
         branch,
     };

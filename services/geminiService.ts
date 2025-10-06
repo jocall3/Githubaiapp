@@ -19,24 +19,20 @@ function getAiClient(): GoogleGenAI {
     return ai;
 }
 
-async function generateCodeEdit(prompt: string): Promise<string> {
+async function generateCodeEditStream(prompt: string, onChunk: (chunk: string) => void): Promise<void> {
     try {
         const client = getAiClient();
-        const response: GenerateContentResponse = await client.models.generateContent({
+        const responseStream = await client.models.generateContentStream({
             model: 'gemini-2.5-flash',
             contents: prompt,
         });
 
-        const editedCode = response.text;
-
-        if (!editedCode || editedCode.trim() === '') {
-            throw new Error("AI returned empty content. Please try a different instruction.");
+        for await (const chunk of responseStream) {
+            const text = chunk.text;
+            if (text) {
+                onChunk(text);
+            }
         }
-        
-        // The model might still wrap the code in markdown fences. Clean it up.
-        const cleanedCode = editedCode.replace(/^```(?:\w*\n)?/, '').replace(/\n?```$/, '').trim();
-
-        return cleanedCode;
     } catch (error) {
         console.error("Error calling Gemini API:", error);
         if (error instanceof Error) {
@@ -48,7 +44,7 @@ async function generateCodeEdit(prompt: string): Promise<string> {
 }
 
 
-export async function editFileWithAI(currentCode: string, instruction: string): Promise<string> {
+export async function editFileWithAI(currentCode: string, instruction: string, onChunk: (chunk: string) => void): Promise<void> {
   const prompt = `
 You are an expert code assistant. Your task is to modify the provided code based on the user's instruction.
 You MUST return only the complete, updated code block. Do not add any explanations, introductory text, or markdown code fences like \`\`\`.
@@ -65,10 +61,10 @@ ${currentCode}
 
 Updated Code:
 `;
-  return generateCodeEdit(prompt);
+  await generateCodeEditStream(prompt, onChunk);
 }
 
-export async function bulkEditFileWithAI(currentCode: string, instruction: string, filePath: string): Promise<string> {
+export async function bulkEditFileWithAI(currentCode: string, instruction: string, filePath: string, onChunk: (chunk: string) => void): Promise<void> {
     const prompt = `
 You are an expert AI programmer executing a high-level directive across an entire codebase.
 For the file located at \`${filePath}\`, apply the following overall instruction:
@@ -90,5 +86,5 @@ ${currentCode}
 
 Updated Code:
 `;
-    return generateCodeEdit(prompt);
+    await generateCodeEditStream(prompt, onChunk);
 }

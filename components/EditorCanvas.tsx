@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { SelectedFile, Branch } from '../types';
 import { Spinner } from './Spinner';
 import { AiChatModal } from './AiChatModal';
@@ -6,9 +6,13 @@ import { CommitModal } from './CommitModal';
 import { SparklesIcon } from './icons/SparklesIcon';
 
 interface EditorCanvasProps {
-  selectedFile: SelectedFile | null;
-  onCommit: (commitMessage: string, content: string) => Promise<void>;
-  onAiEdit: (currentCode: string, instruction: string) => Promise<string>;
+  openFiles: SelectedFile[];
+  activeFile: SelectedFile | null;
+  onCommit: (commitMessage: string) => Promise<void>;
+  onAiEdit: (currentCode: string, instruction: string, onChunk: (chunk: string) => void) => Promise<void>;
+  onFileContentChange: (fileKey: string, newContent: string) => void;
+  onCloseFile: (fileKey: string) => void;
+  onSetActiveFile: (fileKey: string) => void;
   isLoading: boolean;
   branches: Branch[];
   currentBranch: string | null;
@@ -17,10 +21,50 @@ interface EditorCanvasProps {
   onCreatePullRequest: (title: string, body: string) => Promise<void>;
 }
 
+const Tab: React.FC<{
+  file: SelectedFile;
+  isActive: boolean;
+  onSelect: (key: string) => void;
+  onClose: (key: string) => void;
+}> = ({ file, isActive, onSelect, onClose }) => {
+  const hasChanges = file.content !== file.editedContent;
+  const fileKey = file.repoFullName + '::' + file.path;
+  const fileName = file.path.split('/').pop();
+
+  return (
+    <div
+      onClick={() => onSelect(fileKey)}
+      className={`flex items-center justify-between p-2 px-4 cursor-pointer border-b-2 ${
+        isActive
+          ? 'bg-gray-850 border-indigo-500 text-white'
+          : 'bg-gray-900 border-transparent text-gray-400 hover:bg-gray-800'
+      }`}
+    >
+      <span className="text-sm font-medium pr-2">{fileName}</span>
+      <div className="flex items-center">
+        {hasChanges && <div className="w-2 h-2 bg-yellow-400 rounded-full mr-2"></div>}
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onClose(fileKey);
+          }}
+          className="text-gray-500 hover:text-white rounded-full w-5 h-5 flex items-center justify-center hover:bg-gray-700 text-xs"
+        >
+          &times;
+        </button>
+      </div>
+    </div>
+  );
+};
+
 export const EditorCanvas: React.FC<EditorCanvasProps> = ({
-  selectedFile,
+  openFiles,
+  activeFile,
   onCommit,
   onAiEdit,
+  onFileContentChange,
+  onCloseFile,
+  onSetActiveFile,
   isLoading,
   branches,
   currentBranch,
@@ -28,37 +72,55 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
   onCreateBranch,
   onCreatePullRequest,
 }) => {
-  const [editedContent, setEditedContent] = useState('');
   const [isAiModalOpen, setIsAiModalOpen] = useState(false);
   const [isCommitModalOpen, setIsCommitModalOpen] = useState(false);
-  
+
   const [newBranchName, setNewBranchName] = useState('');
   const [isCreatingBranch, setIsCreatingBranch] = useState(false);
-  
+
   const [isCreatingPR, setIsCreatingPR] = useState(false);
   const [prTitle, setPrTitle] = useState('');
   const [prBody, setPrBody] = useState('');
 
   useEffect(() => {
-    if (selectedFile) {
-        const defaultPrTitle = `Update ${selectedFile.path}`;
-        setPrTitle(defaultPrTitle);
-        setEditedContent(selectedFile.content);
+    if (activeFile) {
+      const defaultPrTitle = `Update ${activeFile.path}`;
+      setPrTitle(defaultPrTitle);
     }
-  }, [selectedFile]);
-  
-  const hasChanges = selectedFile ? editedContent !== selectedFile.content : false;
+  }, [activeFile]);
+
+  const hasChanges = activeFile ? activeFile.editedContent !== activeFile.content : false;
 
   const handleAiSubmit = async (instruction: string) => {
-    if (!instruction.trim()) return;
-    const newCode = await onAiEdit(editedContent, instruction);
-    setEditedContent(newCode);
+    if (!instruction.trim() || !activeFile) return;
+
+    const fileKey = activeFile.repoFullName + '::' + activeFile.path;
+    let accumulatedCode = '';
+    
+    // Clear the content for streaming
+    onFileContentChange(fileKey, '');
+
+    const handleChunk = (chunk: string) => {
+      accumulatedCode += chunk;
+      onFileContentChange(fileKey, accumulatedCode);
+    };
+
+    await onAiEdit(activeFile.content, instruction, handleChunk);
+
+    // Final cleanup after streaming is complete
+    const cleanedCode = accumulatedCode.replace(/^```(?:\w*\n)?/, '').replace(/\n?```$/, '').trim();
+    if (cleanedCode) {
+        onFileContentChange(fileKey, cleanedCode);
+    } else {
+        // if AI returns nothing, revert to original edited content
+        onFileContentChange(fileKey, accumulatedCode);
+    }
   };
 
   const handleCommitSubmit = async (commitMessage: string) => {
-    if (!commitMessage.trim() || !selectedFile) return;
-    await onCommit(commitMessage, editedContent);
-    setIsCommitModalOpen(false); // Close modal on success
+    if (!commitMessage.trim() || !activeFile) return;
+    await onCommit(commitMessage);
+    setIsCommitModalOpen(false);
   };
 
   const handleCreateBranchClick = async () => {
@@ -67,35 +129,34 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
     setNewBranchName('');
     setIsCreatingBranch(false);
   };
-  
+
   const handleCreatePrClick = async () => {
     if (!prTitle.trim()) return;
     await onCreatePullRequest(prTitle, prBody);
-    setIsCreatingPR(false); // Hide form on success
-    setPrBody(''); // Clear body
+    setIsCreatingPR(false);
+    setPrBody('');
   };
-  
-  if (!selectedFile) {
+
+  if (!activeFile) {
     return (
       <div className="flex-grow flex items-center justify-center bg-gray-850 text-gray-500">
         <p>Select a file from the explorer to begin editing.</p>
       </div>
     );
   }
-  
-  const defaultCommitMessage = `Update ${selectedFile.path}`;
+
+  const activeFileKey = activeFile.repoFullName + '::' + activeFile.path;
+  const defaultCommitMessage = `Update ${activeFile.path}`;
 
   return (
     <div className="flex flex-col h-full bg-gray-850 relative">
-      {/* Header */}
       <div className="flex items-center justify-between p-2 border-b border-gray-700 bg-gray-900 flex-wrap gap-2">
         <div>
-          <h3 className="text-md font-semibold text-gray-200">{selectedFile.path}</h3>
-          <p className="text-xs text-gray-400">{selectedFile.repoFullName}</p>
+          <h3 className="text-md font-semibold text-gray-200">{activeFile.path}</h3>
+          <p className="text-xs text-gray-400">{activeFile.repoFullName}</p>
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
-          {/* Branch Controls */}
           <div className="flex items-center gap-2">
             <select
               id="branch-select"
@@ -104,67 +165,45 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
               disabled={isLoading}
               className="bg-gray-800 p-2 rounded-md text-sm border border-gray-700 focus:outline-none focus:ring-2 focus:ring-cyan-500"
             >
-              {branches.map(b => <option key={b.name} value={b.name}>{b.name}</option>)}
+              {branches.map((b) => (<option key={b.name} value={b.name}>{b.name}</option>))}
             </select>
             {!isCreatingBranch ? (
               <button onClick={() => setIsCreatingBranch(true)} className="text-sm text-cyan-400 hover:underline px-3 py-1.5" disabled={isLoading}>New Branch</button>
             ) : (
-               <div className="flex gap-2 items-center">
-                 <input
-                    type="text"
-                    value={newBranchName}
-                    onChange={(e) => setNewBranchName(e.target.value)}
-                    placeholder="new-branch-name"
-                    className="bg-gray-800 p-2 rounded-md text-sm border border-gray-700 focus:outline-none focus:ring-2 focus:ring-cyan-500"
-                  />
-                  <button onClick={handleCreateBranchClick} disabled={isLoading || !newBranchName.trim()} className="text-sm bg-cyan-600 text-white font-semibold py-1 px-2 rounded hover:bg-cyan-700 disabled:bg-gray-500">Create</button>
-                  <button onClick={() => setIsCreatingBranch(false)} className="text-sm bg-gray-600 text-white font-semibold py-1 px-2 rounded hover:bg-gray-700">X</button>
-               </div>
+              <div className="flex gap-2 items-center">
+                <input
+                  type="text"
+                  value={newBranchName}
+                  onChange={(e) => setNewBranchName(e.target.value)}
+                  placeholder="new-branch-name"
+                  className="bg-gray-800 p-2 rounded-md text-sm border border-gray-700 focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                />
+                <button onClick={handleCreateBranchClick} disabled={isLoading || !newBranchName.trim()} className="text-sm bg-cyan-600 text-white font-semibold py-1 px-2 rounded hover:bg-cyan-700 disabled:bg-gray-500">Create</button>
+                <button onClick={() => setIsCreatingBranch(false)} className="text-sm bg-gray-600 text-white font-semibold py-1 px-2 rounded hover:bg-gray-700">X</button>
+              </div>
             )}
           </div>
-          
-          {/* Commit Button */}
           <button
             onClick={() => setIsCommitModalOpen(true)}
             disabled={isLoading || !hasChanges}
             className="bg-green-600 text-white font-semibold py-2 px-4 rounded-md hover:bg-green-700 disabled:bg-gray-500 disabled:cursor-not-allowed"
           >
-            Commit Changes
+            Commit Active File
           </button>
-
-          {/* PR Button */}
-          {currentBranch && currentBranch !== selectedFile.defaultBranch && (
-             <button 
-                onClick={() => setIsCreatingPR(!isCreatingPR)} 
-                className="bg-cyan-600 text-white font-semibold py-2 px-4 rounded-md hover:bg-cyan-700 disabled:bg-gray-500"
-                disabled={isLoading}
-            >
-                {isCreatingPR ? 'Cancel PR' : 'Create Pull Request'}
+          {currentBranch && currentBranch !== activeFile.defaultBranch && (
+            <button onClick={() => setIsCreatingPR(!isCreatingPR)} className="bg-cyan-600 text-white font-semibold py-2 px-4 rounded-md hover:bg-cyan-700 disabled:bg-gray-500" disabled={isLoading}>
+              {isCreatingPR ? 'Cancel PR' : 'Create Pull Request'}
             </button>
           )}
         </div>
       </div>
       
-      {/* Create PR Form (inline) */}
       {isCreatingPR && (
         <div className="p-4 bg-gray-800 border-b border-gray-700">
             <h4 className="font-semibold mb-2 text-gray-200">New Pull Request</h4>
-              <p className="text-xs text-gray-400 mb-2">
-                From <code className="bg-gray-700 p-1 rounded-sm text-xs">{currentBranch}</code> into <code className="bg-gray-700 p-1 rounded-sm text-xs">{selectedFile.defaultBranch}</code>
-            </p>
-            <input
-                type="text"
-                value={prTitle}
-                onChange={(e) => setPrTitle(e.target.value)}
-                placeholder="Pull request title"
-                className="w-full bg-gray-900 p-2 rounded-md mb-2 text-sm border border-gray-600 focus:outline-none focus:ring-2 focus:ring-cyan-500"
-            />
-            <textarea
-                value={prBody}
-                onChange={(e) => setPrBody(e.target.value)}
-                placeholder="Describe your changes..."
-                className="w-full h-24 bg-gray-900 p-2 rounded-md mb-2 text-sm border border-gray-600 focus:outline-none focus:ring-2 focus:ring-cyan-500 resize-none"
-            />
+            <p className="text-xs text-gray-400 mb-2">From <code className="bg-gray-700 p-1 rounded-sm text-xs">{currentBranch}</code> into <code className="bg-gray-700 p-1 rounded-sm text-xs">{activeFile.defaultBranch}</code></p>
+            <input type="text" value={prTitle} onChange={(e) => setPrTitle(e.target.value)} placeholder="Pull request title" className="w-full bg-gray-900 p-2 rounded-md mb-2 text-sm border border-gray-600 focus:outline-none focus:ring-2 focus:ring-cyan-500"/>
+            <textarea value={prBody} onChange={(e) => setPrBody(e.target.value)} placeholder="Describe your changes..." className="w-full h-24 bg-gray-900 p-2 rounded-md mb-2 text-sm border border-gray-600 focus:outline-none focus:ring-2 focus:ring-cyan-500 resize-none"/>
             <div className="flex gap-2">
                 <button onClick={handleCreatePrClick} disabled={isLoading || !prTitle.trim()} className="text-sm bg-cyan-600 text-white font-semibold py-1 px-2 rounded hover:bg-cyan-700 disabled:bg-gray-500 flex items-center justify-center">
                     {isLoading ? <Spinner className="h-4 w-4" /> : 'Submit Pull Request'}
@@ -172,18 +211,29 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
             </div>
         </div>
       )}
+      
+      <div className="flex border-b border-gray-700 bg-gray-900 overflow-x-auto">
+        {openFiles.map(file => (
+          <Tab 
+            key={file.repoFullName + '::' + file.path} 
+            file={file} 
+            isActive={(file.repoFullName + '::' + file.path) === activeFileKey}
+            onSelect={onSetActiveFile}
+            onClose={onCloseFile}
+          />
+        ))}
+      </div>
 
-      {/* Editor */}
       <div className="flex-grow p-4">
         <textarea
-          value={editedContent}
-          onChange={(e) => setEditedContent(e.target.value)}
+          key={activeFileKey}
+          value={activeFile.editedContent}
+          onChange={(e) => onFileContentChange(activeFileKey, e.target.value)}
           className="w-full h-full border border-gray-700 rounded-md bg-gray-950 text-gray-200 p-4 font-mono text-sm resize-none focus:outline-none focus:ring-2 focus:ring-indigo-500"
           spellCheck="false"
         />
       </div>
 
-      {/* AI Edit FAB */}
       <button
         onClick={() => setIsAiModalOpen(true)}
         className="absolute bottom-6 right-6 bg-indigo-600 text-white rounded-full p-4 shadow-lg hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-4 focus:ring-offset-gray-850 focus:ring-indigo-500 transition-transform hover:scale-110"
@@ -192,7 +242,6 @@ export const EditorCanvas: React.FC<EditorCanvasProps> = ({
         <SparklesIcon className="h-6 w-6" />
       </button>
 
-      {/* Modals */}
       {isAiModalOpen && (
         <AiChatModal
           onClose={() => setIsAiModalOpen(false)}
