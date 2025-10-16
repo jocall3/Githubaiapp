@@ -1,5 +1,5 @@
 {
-  "name": "github-ai-code-editor",
+  "name": "copy-of-github-ai-code-editor",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -11,7 +11,8 @@
   "dependencies": {
     "react": "^19.1.1",
     "@google/genai": "^1.21.0",
-    "react-dom": "^19.1.1"
+    "react-dom": "^19.1.1",
+    "path-browserify": "^1.0.1"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",

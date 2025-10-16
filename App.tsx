@@ -1,14 +1,17 @@
+
+
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { AuthModal } from './components/AuthModal';
 import { FileExplorer } from './components/FileExplorer';
 import { EditorCanvas } from './components/EditorCanvas';
-import { fetchAllRepos, fetchRepoTree, getFileContent, commitFile, getRepoBranches, createBranch, createPullRequest, getBranch } from './services/githubService';
-import { editFileWithAI, bulkEditFileWithAI } from './services/geminiService';
-import { GithubRepo, UnifiedFileTree, SelectedFile, Alert, Branch, FileNode, DirNode, BulkEditJob } from './types';
+import { createOrUpdateFile, fetchAllRepos, fetchRepoTree, getFileContent, getRepoBranches, createBranch, createPullRequest } from './services/githubService';
+import { editFileWithAI, getExpansionBlueprint, generateFileForBlueprint } from './services/geminiService';
+import { GithubRepo, UnifiedFileTree, SelectedFile, Alert, Branch, FileNode, DirNode, ExpansionJob } from './types';
 import { Spinner } from './components/Spinner';
 import { AlertPopup } from './components/AlertPopup';
-import { MultiFileAiEditModal } from './components/BulkAiEditModal';
-import { BulkEditProgress } from './components/BulkEditProgress';
+import { ExpansionModal } from './components/ExpansionModal';
+import { ExpansionProgress } from './components/ExpansionProgress';
+import * as path from 'path-browserify';
 
 export const getAllFilePaths = (nodes: (DirNode | FileNode)[]): string[] => {
     let paths: string[] = [];
@@ -37,11 +40,11 @@ export default function App() {
   const [branchesByRepo, setBranchesByRepo] = useState<Record<string, Branch[]>>({});
   const [currentBranchByRepo, setCurrentBranchByRepo] = useState<Record<string, string>>({});
 
-  const [isMultiEditModalOpen, setMultiEditModalOpen] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
 
-  const [isBulkEditing, setIsBulkEditing] = useState(false);
-  const [bulkEditJobs, setBulkEditJobs] = useState<BulkEditJob[]>([]);
+  const [isExpansionModalOpen, setExpansionModalOpen] = useState(false);
+  const [isExpanding, setIsExpanding] = useState(false);
+  const [expansionJobs, setExpansionJobs] = useState<ExpansionJob[]>([]);
   
   const activeFile = openFiles.find(f => (f.repoFullName + '::' + f.path) === activeFileKey);
   const currentBranch = activeFile ? currentBranchByRepo[activeFile.repoFullName] : null;
@@ -183,7 +186,7 @@ export default function App() {
     try {
       const [owner, repoName] = activeFile.repoFullName.split('/');
       
-      await commitFile({
+      await createOrUpdateFile({
         token,
         owner,
         repo: repoName,
@@ -205,7 +208,9 @@ export default function App() {
       showAlert('success', 'Commit successful!');
     } catch (error) {
       console.error(error);
-      showAlert('error', `Failed to commit changes: ${(error as Error).message}`);
+      // FIX: Safely access error message to prevent crashes if a non-Error is thrown.
+      const message = error instanceof Error ? error.message : String(error);
+      showAlert('error', `Failed to commit changes: ${message}`);
     } finally {
       setIsLoading(false);
       setLoadingMessage('');
@@ -248,7 +253,9 @@ export default function App() {
 
     } catch(error) {
         console.error(error);
-        showAlert('error', `Failed to create branch: ${(error as Error).message}`);
+        // FIX: Safely access error message to prevent crashes if a non-Error is thrown.
+        const message = error instanceof Error ? error.message : String(error);
+        showAlert('error', `Failed to create branch: ${message}`);
     } finally {
         setIsLoading(false);
         setLoadingMessage('');
@@ -277,7 +284,10 @@ export default function App() {
 
     } catch (error) {
       console.error(error);
-      showAlert('error', `Failed to create pull request: ${(error as Error).message}`);
+      // FIX: Safely access error message to prevent crashes if a non-Error is thrown.
+      // This resolves the user-reported issue, as the original error message was likely misleading.
+      const message = error instanceof Error ? error.message : String(error);
+      showAlert('error', `Failed to create pull request: ${message}`);
     } finally {
       setIsLoading(false);
       setLoadingMessage('');
@@ -290,7 +300,6 @@ export default function App() {
       if (isSelected) {
         newSet.add(fileKey);
       } else {
-        // Fix: Corrected typo from 'key' to 'fileKey' to match the function parameter.
         newSet.delete(fileKey);
       }
       return newSet;
@@ -313,100 +322,141 @@ export default function App() {
     });
   }, []);
 
-  const handleMultiFileEditSubmit = useCallback(async (instruction: string) => {
+  const handleExpansionSubmit = useCallback(async (goal: string, filesPerSeed: number) => {
     if (!token || selectedFiles.size === 0) return;
-    
-    setMultiEditModalOpen(false);
-    
-    const paths = Array.from(selectedFiles);
-    const initialJobs: BulkEditJob[] = paths.map(fullPath => {
-        const [repoFullName, path] = fullPath.split('::');
-        return {
-            id: fullPath,
-            repoFullName,
-            path,
-            status: 'queued',
-            content: '',
-            error: null,
-        };
-    });
-    setBulkEditJobs(initialJobs);
-    setIsBulkEditing(true);
+
+    setExpansionModalOpen(false);
+    setIsExpanding(true);
+    setExpansionJobs([]);
+
+    const seedFileKeys = Array.from(selectedFiles);
     setSelectedFiles(new Set());
 
-    const processFile = async (jobId: string) => {
-        setBulkEditJobs(prev => prev.map(j => j.id === jobId ? { ...j, status: 'processing' } : j));
-        
-        const job = initialJobs.find(j => j.id === jobId);
-        if (!job || !token) return;
+    try {
+      // Step 1: Get blueprints for all seed files
+      const blueprintPromises = seedFileKeys.map(async (seedKey) => {
+          const [repoFullName, seedFilePath] = seedKey.split('::');
+          const [owner, repo] = repoFullName.split('/');
+          const repoData = fileTree[repoFullName]?.repo;
+          if (!repoData) throw new Error(`Repo data not found for ${repoFullName}`);
+          const branch = currentBranchByRepo[repoFullName] || repoData.default_branch;
+          
+          const file = await getFileContent(token, owner, repo, seedFilePath, branch);
+          const blueprintItems = await getExpansionBlueprint(goal, filesPerSeed, seedFilePath, file.content);
+          
+          return blueprintItems.map(item => {
+              const seedDir = path.dirname(seedFilePath);
+              const newFilePath = path.join(seedDir, item.filePath);
+              const id = `${repoFullName}::${newFilePath}`;
 
-        const { repoFullName, path } = job;
-        const [owner, repo] = repoFullName.split('/');
-        const repoData = fileTree[repoFullName]?.repo;
-        if (!repoData) {
-            setBulkEditJobs(prev => prev.map(j => j.id === jobId ? { ...j, status: 'failed', error: 'Repo data not found' } : j));
+              const job: ExpansionJob = {
+                  id,
+                  repoFullName,
+                  seedFilePath,
+                  newFilePath,
+                  description: item.description,
+                  status: 'queued',
+                  generatedContent: `// ${item.description}`,
+                  error: null,
+              };
+              return job;
+          });
+      });
+
+      const jobArrays = await Promise.all(blueprintPromises);
+      const initialJobs = jobArrays.flat();
+      
+      if (initialJobs.length === 0) {
+        showAlert('error', 'The AI architect failed to create an expansion plan. Please try a more specific goal or select different seed files.');
+        setIsExpanding(false);
+        return;
+      }
+
+      setExpansionJobs(initialJobs);
+
+      // Step 2: Process the jobs queue
+      const processJob = async (job: ExpansionJob) => {
+          setExpansionJobs(prev => prev.map(j => j.id === job.id ? { ...j, status: 'generating' } : j));
+          
+          if (!token) return;
+          const { repoFullName, seedFilePath, newFilePath } = job;
+
+          // FIX: Add type guard for repoFullName to prevent runtime error on '.split'.
+          // This addresses the "Property 'split' does not exist on type 'unknown'" error by ensuring
+          // the variable is a string before attempting to call string methods on it.
+          if (typeof repoFullName !== 'string') {
+            setExpansionJobs(prev => prev.map(j => j.id === job.id ? { ...j, status: 'failed', error: 'Invalid repository name in job.' } : j));
             return;
+          }
+
+          const [owner, repo] = repoFullName.split('/');
+          const repoData = fileTree[repoFullName]?.repo;
+          if (!repoData) {
+              setExpansionJobs(prev => prev.map(j => j.id === job.id ? { ...j, status: 'failed', error: 'Repo data not found' } : j));
+              return;
+          }
+
+          try {
+              const branch = currentBranchByRepo[repoFullName] || repoData.default_branch;
+              const seedFile = await getFileContent(token, owner, repo, seedFilePath, branch);
+
+              let newContent = '';
+              const handleChunk = (chunk: string) => {
+                  newContent += chunk;
+                  setExpansionJobs(prev => prev.map(j => j.id === job.id ? { ...j, generatedContent: newContent } : j));
+              };
+
+              await generateFileForBlueprint(goal, seedFilePath, seedFile.content, { filePath: newFilePath, description: job.description }, handleChunk);
+
+              if (newContent.trim() === '') {
+                  throw new Error("AI returned empty content.");
+              }
+
+              setExpansionJobs(prev => prev.map(j => j.id === job.id ? { ...j, status: 'committing' } : j));
+              
+              await createOrUpdateFile({
+                  token, owner, repo, branch, path: newFilePath, content: newContent,
+                  message: `[AI] Create ${path.basename(newFilePath)} based on ${path.basename(seedFilePath)}`,
+              });
+              
+              setExpansionJobs(prev => prev.map(j => j.id === job.id ? { ...j, status: 'success' } : j));
+
+          } catch (err) {
+              const errorMessage = (err instanceof Error) ? err.message : 'An unknown error occurred.';
+              setExpansionJobs(prev => prev.map(j => j.id === job.id ? { ...j, status: 'failed', error: errorMessage } : j));
+          }
+      };
+      
+      const CONCURRENCY_LIMIT = 5;
+      const taskQueue = [...initialJobs];
+      const worker = async () => {
+          while(taskQueue.length > 0) {
+              const job = taskQueue.shift();
+              if (job) await processJob(job);
+          }
+      };
+      await Promise.all(Array(CONCURRENCY_LIMIT).fill(null).map(worker));
+
+      showAlert('success', 'AI project expansion completed.');
+      // Refresh file tree for repos that were modified
+      const modifiedRepos = new Set(initialJobs.map(j => j.repoFullName));
+      modifiedRepos.forEach(async (repoFullName) => {
+        if (!token) return;
+        const [owner, name] = repoFullName.split('/');
+        const repoData = fileTree[repoFullName]?.repo;
+        if (repoData) {
+          const branch = currentBranchByRepo[repoFullName] || repoData.default_branch;
+          const tree = await fetchRepoTree(token, owner, name, branch);
+          setFileTree(prev => ({...prev, [repoFullName]: {...prev[repoFullName], tree}}));
         }
+      });
+    } catch (err) {
+      const errorMessage = (err instanceof Error) ? err.message : 'An unknown error occurred during expansion planning.';
+      showAlert('error', `Expansion Failed: ${errorMessage}`);
+      setIsExpanding(false);
+    }
+  }, [token, selectedFiles, fileTree, currentBranchByRepo]);
 
-        try {
-            const branch = currentBranchByRepo[repoFullName] || repoData.default_branch;
-            const fileContent = await getFileContent(token, owner, repo, path, branch);
-
-            let newContent = '';
-            const handleChunk = (chunk: string) => {
-                newContent += chunk;
-                setBulkEditJobs(prev => prev.map(j => j.id === jobId ? { ...j, content: newContent } : j));
-            };
-
-            await bulkEditFileWithAI(fileContent.content, instruction, path, handleChunk);
-            
-            if (newContent.trim() === fileContent.content.trim() || newContent.trim() === '') {
-                setBulkEditJobs(prev => prev.map(j => j.id === jobId ? { ...j, status: 'skipped' } : j));
-                return;
-            }
-            
-            await commitFile({
-                token, owner, repo, branch, path, content: newContent,
-                message: `[AI] Edit: ${path}`,
-                sha: fileContent.sha,
-            });
-            
-            setBulkEditJobs(prev => prev.map(j => j.id === jobId ? { ...j, status: 'success' } : j));
-
-            const committedFileKey = `${repoFullName}::${path}`;
-            const isOpen = openFiles.some(f => (f.repoFullName + '::' + f.path) === committedFileKey);
-            if (isOpen) {
-                const updatedFile = await getFileContent(token, owner, repo, path, branch);
-                 setOpenFiles(prev => prev.map(f => 
-                    (f.repoFullName + '::' + f.path) === committedFileKey 
-                    ? { ...f, content: updatedFile.content, editedContent: updatedFile.content, sha: updatedFile.sha } 
-                    : f
-                ));
-            }
-        } catch (err) {
-             const errorMessage = (err instanceof Error) ? err.message : 'An unknown error occurred.';
-             setBulkEditJobs(prev => prev.map(j => j.id === jobId ? { ...j, status: 'failed', error: errorMessage } : j));
-        }
-    };
-
-    const CONCURRENCY_LIMIT = 5;
-    const taskQueue = [...initialJobs];
-
-    const worker = async () => {
-        while (taskQueue.length > 0) {
-            const job = taskQueue.shift();
-            if (job) {
-                await processFile(job.id);
-            }
-        }
-    };
-
-    const workers = Array(CONCURRENCY_LIMIT).fill(null).map(worker);
-    await Promise.all(workers);
-
-    showAlert('success', 'Multi-file edit process completed.');
-    
-  }, [token, selectedFiles, fileTree, currentBranchByRepo, openFiles]);
 
   return (
     <div className="flex h-screen font-sans">
@@ -418,7 +468,7 @@ export default function App() {
             <FileExplorer 
               fileTree={fileTree} 
               onFileSelect={handleOpenFile}
-              onStartMultiEdit={() => setMultiEditModalOpen(true)}
+              onStartExpansion={() => setExpansionModalOpen(true)}
               selectedRepo={activeFile?.repoFullName}
               selectedFilePath={activeFile?.path}
               selectedFiles={selectedFiles}
@@ -435,7 +485,7 @@ export default function App() {
               onFileContentChange={handleFileContentChange}
               onCloseFile={handleCloseFile}
               onSetActiveFile={handleSetActiveFile}
-              isLoading={isLoading}
+              isLoading={isLoading && !isExpanding}
               branches={branches}
               currentBranch={currentBranch}
               onBranchChange={handleBranchChange}
@@ -446,7 +496,7 @@ export default function App() {
         </>
       )}
 
-      {isLoading && !isBulkEditing && (
+      {isLoading && !isExpanding && (
         <div className="fixed top-5 left-1/2 -translate-x-1/2 bg-gray-800 text-white px-6 py-3 rounded-lg shadow-lg z-50 flex items-center gap-4 animate-fade-in-down">
           <style>{`
             @keyframes fade-in-down {
@@ -470,20 +520,20 @@ export default function App() {
 
       {alert && <AlertPopup alert={alert} onClose={() => setAlert(null)} />}
 
-      {isMultiEditModalOpen && (
-        <MultiFileAiEditModal
+      {isExpansionModalOpen && (
+        <ExpansionModal
           fileCount={selectedFiles.size}
-          onClose={() => setMultiEditModalOpen(false)}
-          onSubmit={handleMultiFileEditSubmit}
+          onClose={() => setExpansionModalOpen(false)}
+          onSubmit={handleExpansionSubmit}
         />
       )}
 
-      {isBulkEditing && (
-        <BulkEditProgress 
-            jobs={bulkEditJobs}
-            onClose={() => setIsBulkEditing(false)}
-            isComplete={!bulkEditJobs.some(j => j.status === 'processing' || j.status === 'queued')}
-        />
+      {isExpanding && (
+          <ExpansionProgress
+              jobs={expansionJobs}
+              onClose={() => setIsExpanding(false)}
+              isComplete={!expansionJobs.some(j => j.status === 'queued' || j.status === 'generating' || j.status === 'committing')}
+          />
       )}
     </div>
   );

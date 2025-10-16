@@ -2,13 +2,13 @@ import React, { useState, useEffect, useRef } from 'react';
 import { UnifiedFileTree, DirNode, FileNode, GithubRepo } from '../types';
 import { FolderIcon, FolderOpenIcon } from './icons/FolderIcon';
 import { FileIcon } from './icons/FileIcon';
-import { BotIcon } from './icons/BotIcon';
+import { SparklesIcon } from './icons/SparklesIcon';
 import { getAllFilePaths } from '../App';
 
 interface FileExplorerProps {
   fileTree: UnifiedFileTree;
   onFileSelect: (repoFullName: string, path: string) => void;
-  onStartMultiEdit: () => void;
+  onStartExpansion: () => void;
   selectedFilePath?: string | null;
   selectedRepo?: string | null;
   selectedFiles: Set<string>;
@@ -64,7 +64,7 @@ const TreeNode: React.FC<TreeNodeProps> = ({ node, repoFullName, onFileClick, se
         return (
             <div>
                 <div className="flex items-center p-1.5 hover:bg-gray-700 rounded-md group">
-                    <input type="checkbox" ref={checkboxRef} onChange={handleCheckboxChange} className="mr-2 h-4 w-4 rounded bg-gray-800 border-gray-600 text-amber-500 focus:ring-amber-600" />
+                    <input type="checkbox" ref={checkboxRef} onChange={handleCheckboxChange} className="mr-2 h-4 w-4 rounded bg-gray-800 border-gray-600 text-purple-500 focus:ring-purple-600" />
                     <div 
                         className="flex items-center cursor-pointer flex-grow"
                         onClick={() => setIsOpen(!isOpen)}
@@ -100,7 +100,7 @@ const TreeNode: React.FC<TreeNodeProps> = ({ node, repoFullName, onFileClick, se
         <div
             className={`flex items-center p-1.5 group rounded-md ${isActiveFile ? 'bg-indigo-900 bg-opacity-50' : 'hover:bg-gray-700'}`}
         >
-            <input type="checkbox" checked={isSelectedForEditing} onChange={handleCheckboxChange} className="mr-2 h-4 w-4 rounded bg-gray-800 border-gray-600 text-amber-500 focus:ring-amber-600" />
+            <input type="checkbox" checked={isSelectedForEditing} onChange={handleCheckboxChange} className="mr-2 h-4 w-4 rounded bg-gray-800 border-gray-600 text-purple-500 focus:ring-purple-600" />
             <div className="flex items-center cursor-pointer flex-grow" onClick={() => onFileClick(repoFullName, node.path)}>
                 <FileIcon className="w-5 h-5 mr-2 text-gray-400" />
                 <span className={isActiveFile ? 'text-white' : 'text-gray-300'}>{node.name}</span>
@@ -164,7 +164,7 @@ const RepoNode: React.FC<{
 export const FileExplorer: React.FC<FileExplorerProps> = ({ 
     fileTree, 
     onFileSelect, 
-    onStartMultiEdit, 
+    onStartExpansion, 
     selectedFilePath, 
     selectedRepo,
     selectedFiles,
@@ -180,11 +180,11 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
       {selectedFiles.size > 0 && (
         <div className="mb-4 sticky top-0 bg-gray-900 py-2 z-10">
             <button
-                onClick={onStartMultiEdit}
-                className="w-full flex items-center justify-center gap-2 bg-amber-600 text-white font-semibold py-2 px-4 rounded-md hover:bg-amber-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900 focus:ring-amber-500 transition-colors"
+                onClick={onStartExpansion}
+                className="w-full flex items-center justify-center gap-2 bg-purple-600 text-white font-semibold py-2 px-4 rounded-md hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900 focus:ring-purple-500 transition-colors"
             >
-                <BotIcon className="w-5 h-5" />
-                AI Edit {selectedFiles.size} Selected File{selectedFiles.size > 1 ? 's' : ''}
+                <SparklesIcon className="w-5 h-5" />
+                AI Expand Project...
             </button>
         </div>
       )}

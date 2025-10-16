@@ -1,3 +1,4 @@
+
 export interface GithubRepo {
   id: number;
   name: string;
@@ -80,13 +81,31 @@ export interface PullRequest {
   state: 'open' | 'closed';
 }
 
+export interface ExpansionBlueprintItem {
+  filePath: string;
+  description: string;
+}
+
+export type ExpansionJobStatus = 'queued' | 'generating' | 'committing' | 'success' | 'failed';
+
+export interface ExpansionJob {
+  id: string; // unique ID, e.g., `${repoFullName}::${newFilePath}`
+  repoFullName: string;
+  seedFilePath: string;
+  newFilePath: string;
+  description: string;
+  status: ExpansionJobStatus;
+  generatedContent: string;
+  error: string | null;
+}
+
+// FIX: Add missing types for the Bulk Edit feature.
 export type BulkEditJobStatus = 'queued' | 'processing' | 'success' | 'skipped' | 'failed';
 
 export interface BulkEditJob {
-  id: string; // repoFullName::path
-  repoFullName: string;
+  id: string;
   path: string;
   status: BulkEditJobStatus;
-  content: string; // For streaming preview
+  content: string;
   error: string | null;
 }

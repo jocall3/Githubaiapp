@@ -71,7 +71,7 @@ const buildTreeStructure = (items: GitTreeItem[]): (DirNode | FileNode)[] => {
   });
 
   // Recursive function to convert the temp structure (with object children) to the final one (with array children).
-  const convertToArrayAndSort = (level: { [key: string]: TempDirNode | FileNode }): (DirNode | FileNode)[] => {
+  const convertToArrayAndSort = (level: { [key:string]: TempDirNode | FileNode }): (DirNode | FileNode)[] => {
     const nodes = Object.values(level).map(node => {
       if (node.type === 'dir') {
         const childrenArray = convertToArrayAndSort((node as TempDirNode).children);
@@ -129,7 +129,7 @@ export async function createBranch(token: string, owner: string, repo: string, n
   });
 }
 
-interface CommitFileParams {
+interface CreateOrUpdateFileParams {
   token: string;
   owner: string;
   repo: string;
@@ -137,7 +137,7 @@ interface CommitFileParams {
   path: string;
   content: string;
   message: string;
-  sha: string; // The blob SHA of the file being replaced.
+  sha?: string; // The blob SHA of the file being replaced. Omit to create a new file.
 }
 
 /**
@@ -152,13 +152,21 @@ function utf8_to_b64(str: string): string {
 }
 
 
-export async function commitFile({ token, owner, repo, branch, path, content, message, sha }: CommitFileParams): Promise<string> {
-    const commitData = {
+export async function createOrUpdateFile({ token, owner, repo, branch, path, content, message, sha }: CreateOrUpdateFileParams): Promise<{ sha: string }> {
+    const commitData: {
+        message: string;
+        content: string;
+        branch: string;
+        sha?: string;
+    } = {
         message,
         content: utf8_to_b64(content), // base64 encode the content, supporting UTF-8
-        sha,
         branch,
     };
+
+    if (sha) {
+        commitData.sha = sha;
+    }
 
     const result = await githubFetch<{ content: { sha: string } }>(`/repos/${owner}/${repo}/contents/${path}`, token, {
         method: 'PUT',
@@ -166,7 +174,7 @@ export async function commitFile({ token, owner, repo, branch, path, content, me
         headers: { 'Content-Type': 'application/json' },
     });
     
-    return result.content.sha;
+    return result.content;
 }
 
 
